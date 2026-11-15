@@ -166,12 +166,19 @@ def _chat(settings: OllamaSettings, prompt: str, cancel_event: threading.Event) 
         raise AIPickError("Ollama timed out.") from exc
     except requests.RequestException as exc:
         raise AIPickError(f"Ollama is unreachable at {settings.base_url}.") from exc
-    if r.status_code == 401:
-        raise AIPickError("Ollama rejected the API key (401).")
-    if r.status_code == 404:
-        raise AIPickError(f"Ollama model '{settings.model}' was not found (404). Pull it first: ollama pull {settings.model}")
     if r.status_code >= 400:
-        raise AIPickError(f"Ollama returned HTTP {r.status_code}.")
+        # Ollama explains most failures in {"error": "..."} (bad key, billing, unknown model).
+        try:
+            server_msg = str(r.json().get("error") or "").strip()
+        except ValueError:
+            server_msg = ""
+        server_msg = server_msg.replace(settings.api_key, "***") if settings.api_key else server_msg
+        if r.status_code == 401:
+            raise AIPickError(f"Ollama rejected the API key (401){': ' + server_msg if server_msg else ''}.")
+        if r.status_code == 404:
+            hint = f" Pull it first: ollama pull {settings.model}" if settings.mode == "local" else ""
+            raise AIPickError(f"Ollama model '{settings.model}' was not found (404).{hint}")
+        raise AIPickError(f"Ollama returned HTTP {r.status_code}{': ' + server_msg[:200] if server_msg else ''}")
     try:
         return str(r.json()["message"]["content"])
     except (ValueError, KeyError, TypeError) as exc:
