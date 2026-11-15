@@ -1,0 +1,171 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>ClipForge</title>
+  <link rel="stylesheet" href="/static/style.css?v=2">
+</head>
+<body>
+<header class="topbar">
+  <div class="brand"><span class="logo">&#9986;</span> ClipForge</div>
+  <div class="sys" id="sysInfo">Checking system...</div>
+</header>
+
+<main class="wrap">
+  <div id="sysWarning" class="banner warn" hidden></div>
+
+  <section class="card" id="inputCard">
+    <h2>1. Your video</h2>
+    <div class="inputs">
+      <label class="drop" id="dropZone" tabindex="0">
+        <input type="file" id="fileInput" accept="video/*,.mkv,.mov,.avi,.webm,.flv,.wmv,.ts,.m4v" hidden>
+        <div class="drop-icon">&#8679;</div>
+        <div><strong>Drop a video here</strong> or click to choose</div>
+        <div class="muted small" id="fileName">MP4, MOV, MKV, WEBM, AVI... any length</div>
+      </label>
+      <div class="or">or</div>
+      <div class="link-box">
+        <label for="urlInput">Paste a link</label>
+        <input type="url" id="urlInput" placeholder="https://www.youtube.com/watch?v=...">
+        <div class="muted small">YouTube, Vimeo, X, Instagram and <a href="https://github.com/yt-dlp/yt-dlp/blob/master/supportedsites.md" target="_blank" rel="noopener">many more</a></div>
+      </div>
+    </div>
+  </section>
+
+  <section class="card">
+    <h2>2. Options</h2>
+    <div class="grid">
+      <div class="field"><label for="numClips">Number of clips</label><input type="number" id="numClips" min="1" max="20" value="5"></div>
+      <div class="field"><label for="minLen">Min length (s)</label><input type="number" id="minLen" min="5" max="300" value="20"></div>
+      <div class="field"><label for="maxLen">Max length (s)</label><input type="number" id="maxLen" min="10" max="600" value="60"></div>
+      <div class="field"><label>Format</label>
+        <div class="seg" data-name="fmt">
+          <button type="button" class="on" data-value="original">Original</button>
+          <button type="button" data-value="vertical">9:16 vertical</button>
+        </div>
+      </div>
+      <div class="field"><label for="whisperModel">Whisper model</label>
+        <select id="whisperModel">
+          <option value="tiny">tiny (fastest)</option>
+          <option value="base" selected>base (default)</option>
+          <option value="small">small (better)</option>
+          <option value="medium">medium (best, slow)</option>
+        </select>
+      </div>
+      <div class="field"><label for="language">Language</label>
+        <select id="language">
+          <option value="auto" selected>Auto-detect</option>
+          <option value="en">English</option>
+          <option value="hi">Hindi</option>
+          <option value="es">Spanish</option>
+          <option value="fr">French</option>
+          <option value="de">German</option>
+          <option value="pt">Portuguese</option>
+          <option value="ur">Urdu</option>
+          <option value="bn">Bengali</option>
+          <option value="ta">Tamil</option>
+          <option value="te">Telugu</option>
+          <option value="mr">Marathi</option>
+          <option value="ar">Arabic</option>
+          <option value="ja">Japanese</option>
+        </select>
+      </div>
+    </div>
+
+    <div class="subgroup">
+      <label class="switch"><input type="checkbox" id="captions" checked><span class="toggle"></span> Burn in captions</label>
+      <div class="grid compact" id="captionOpts">
+        <div class="field"><label>Size</label>
+          <div class="seg" data-name="caption_size">
+            <button type="button" data-value="small">Small</button>
+            <button type="button" class="on" data-value="medium">Medium</button>
+            <button type="button" data-value="large">Large</button>
+          </div>
+        </div>
+        <div class="field"><label>Position</label>
+          <div class="seg" data-name="caption_position">
+            <button type="button" class="on" data-value="bottom">Bottom</button>
+            <button type="button" data-value="middle">Middle</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="subgroup">
+      <label class="switch"><input type="checkbox" id="useAi"><span class="toggle"></span> AI clip-picker (Ollama) <span class="muted small">&nbsp;optional - falls back to the built-in scorer</span></label>
+      <div id="aiOpts" hidden>
+        <div class="grid compact">
+          <div class="field"><label>Mode</label>
+            <div class="seg" data-name="ai_mode">
+              <button type="button" class="on" data-value="local">Local</button>
+              <button type="button" data-value="cloud">Cloud</button>
+            </div>
+          </div>
+          <div class="field"><label for="aiUrl">Base URL</label><input type="url" id="aiUrl" value="http://localhost:11434"></div>
+          <div class="field"><label for="aiModel">Model</label><input type="text" id="aiModel" value="llama3.2" list="aiModelList"><datalist id="aiModelList"></datalist></div>
+          <div class="field" id="aiKeyField" hidden><label for="aiKey">API key</label><input type="password" id="aiKey" placeholder="Stored locally in config.json" autocomplete="off"></div>
+        </div>
+        <div class="row">
+          <button type="button" class="btn ghost" id="aiSave">Save settings</button>
+          <button type="button" class="btn ghost" id="aiTest">Test connection</button>
+          <span class="muted small" id="aiMsg"></span>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <div class="actions">
+    <button class="btn primary big" id="startBtn">Find clips</button>
+  </div>
+
+  <section class="card" id="progressCard" hidden>
+    <div class="row space">
+      <h2 id="stageName">Starting...</h2>
+      <button class="btn danger" id="cancelBtn">Cancel</button>
+    </div>
+    <div class="bar"><div id="barFill"></div></div>
+    <div class="row space small muted"><span id="stageMsg"></span><span id="stagePct"></span></div>
+  </section>
+
+  <div id="errorBox" class="banner error" hidden></div>
+  <div id="noticeBox" class="banner info" hidden></div>
+
+  <section id="resultsSection" hidden>
+    <div class="row space results-head">
+      <h2 id="resultsTitle">Your clips</h2>
+      <a class="btn primary" id="zipBtn" href="#">Download all (zip)</a>
+    </div>
+    <div class="clips" id="clips"></div>
+  </section>
+
+  <section class="card muted-card">
+    <div class="row space">
+      <div><strong>Previous jobs</strong> <span class="muted small" id="jobCount"></span></div>
+      <button class="btn ghost" id="clearBtn">Clear old jobs</button>
+    </div>
+    <div id="jobList" class="joblist"></div>
+  </section>
+
+  <p class="footnote">Runs 100% locally. Only clip videos you own or have the rights to use.</p>
+</main>
+
+<template id="clipTpl">
+  <article class="clip">
+    <video controls preload="metadata" playsinline></video>
+    <div class="clip-body">
+      <div class="row space"><span class="score"></span><span class="time muted small"></span></div>
+      <h3 class="title"></h3>
+      <p class="reason muted small"></p>
+      <details><summary class="small">Transcript</summary><p class="text small"></p></details>
+      <div class="row">
+        <a class="btn primary dl">Download MP4</a>
+        <a class="btn ghost srt">SRT</a>
+      </div>
+    </div>
+  </article>
+</template>
+
+<script src="/static/app.js?v=2"></script>
+</body>
+</html>
