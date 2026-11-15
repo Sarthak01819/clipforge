@@ -262,10 +262,13 @@ function renderResults(jobId, result) {
     if (!c.text) node.querySelector("details").remove();
     const dl = node.querySelector(".dl");
     dl.href = base + encodeURIComponent(c.file) + "?download=1";
+    dl.dataset.job = jobId; dl.dataset.name = c.file;
     const srt = node.querySelector(".srt");
-    if (c.srt) srt.href = base + encodeURIComponent(c.srt) + "?download=1"; else srt.remove();
+    if (c.srt) { srt.href = base + encodeURIComponent(c.srt) + "?download=1"; srt.dataset.job = jobId; srt.dataset.name = c.srt; }
+    else srt.remove();
     wrap.appendChild(node);
   }
+  $("zipBtn").dataset.job = jobId; $("zipBtn").dataset.name = "zip";
   show($("resultsSection"));
   $("resultsSection").scrollIntoView({ behavior: "smooth", block: "start" });
 }
@@ -299,7 +302,71 @@ async function clearJobs() {
   } catch (e) { showError(e.message); }
 }
 
+// ---------------------------------------------------------------- desktop app bridge
+// In the desktop app (pywebview) the page can call Python: native "Save as" dialogs,
+// opening links in the real browser, and opening the data folder.
+function desktopApi() { return window.pywebview && window.pywebview.api; }
+
+document.addEventListener("click", async (e) => {
+  const api = desktopApi();
+  if (!api) return;
+  const save = e.target.closest("a[data-job][data-name]");
+  if (save) {
+    e.preventDefault();
+    const r = await api.save_file(save.dataset.job, save.dataset.name);
+    if (r && r.ok) {
+      const box = $("noticeBox");
+      box.innerHTML = `Saved to ${escapeHtml(r.path)} <button class="btn ghost" id="showSaved">Show in folder</button>`;
+      show(box);
+      $("showSaved").onclick = () => api.show_in_folder(r.path);
+    } else if (r && r.error) showError(r.error);
+    return;
+  }
+  const ext = e.target.closest('a[target="_blank"]');
+  if (ext) { e.preventDefault(); api.open_url(ext.href); }
+});
+
+// ---------------------------------------------------------------- GPU pack
+let gpuTimer = null;
+async function loadGpu() {
+  clearTimeout(gpuTimer);
+  let g;
+  try { g = await api("/api/gpu"); } catch { return; }
+  const card = $("gpuCard");
+  if (!g.nvidia_gpu) { show(card, false); return; }
+  show(card);
+  const busy = g.state === "downloading" || g.state === "extracting";
+  let text;
+  if (busy) {
+    const pct = g.total_mb ? Math.round(g.downloaded_mb / g.total_mb * 100) : 0;
+    text = `${g.message}... ${g.downloaded_mb} of ${g.total_mb} MB (${pct}%)`;
+  } else if (!g.installed && g.active) {
+    text = "On - Whisper transcribes on your NVIDIA GPU using CUDA libraries already on this PC.";
+  } else if (g.installed) {
+    text = g.active ? `On - Whisper transcribes on your NVIDIA GPU. Uses ${g.size_mb} MB.` : `Installed (${g.size_mb} MB), but the GPU could not be used. Try updating your NVIDIA driver.`;
+  } else {
+    text = "Off - Whisper uses the CPU. Your NVIDIA GPU can transcribe about 2x faster with a one-time download (about 550 MB, unpacks to 740 MB).";
+  }
+  if (!busy && g.message && (g.state === "error" || g.state === "cancelled" || g.state === "done" || !g.installed)) text += ` ${g.message}`;
+  $("gpuText").textContent = text;
+  show($("gpuInstall"), !g.installed && !g.active && !busy);
+  show($("gpuCancel"), busy);
+  show($("gpuRemove"), g.installed && !busy);
+  if (busy) gpuTimer = setTimeout(loadGpu, 1000);
+  else loadSystem();
+}
+async function gpuAction(path, method) {
+  try { await api(path, { method }); } catch (e) { showError(e.message); }
+  loadGpu();
+}
+$("gpuInstall").addEventListener("click", () => gpuAction("/api/gpu/install", "POST"));
+$("gpuCancel").addEventListener("click", () => gpuAction("/api/gpu/cancel", "POST"));
+$("gpuRemove").addEventListener("click", () => { if (confirm("Remove the GPU pack? Transcription will use the CPU.")) gpuAction("/api/gpu", "DELETE"); });
+$("dataFolderBtn").addEventListener("click", () => { const a = desktopApi(); if (a) a.open_data_folder(); });
+window.addEventListener("pywebviewready", () => show($("dataFolderBtn")));
+
 initInputs();
 loadSystem();
 loadAi();
 loadJobs();
+loadGpu();

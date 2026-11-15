@@ -13,7 +13,25 @@ Everything runs on your own computer. No paid services, no account and no API ke
 
 > **Only clip videos you own or have the rights to use.** Downloading or re-uploading other people's content can break copyright law and the site's terms of service.
 
-## Requirements
+## Desktop app (no Python, no browser)
+
+ClipForge also comes as a normal Windows app with its own window, Start Menu entry and uninstaller. You don't need Python, this source folder or a browser to use it.
+
+- **Install:** run `ClipForge-Setup-1.0.0.exe` (about 123 MB). It installs for your user only, with no admin rights, into `%LOCALAPPDATA%\Programs\ClipForge` (about 450 MB). After that, the source folder isn't needed.
+- **Your data:** clips, Whisper models, settings (`config.json`) and logs are stored in `%LOCALAPPDATA%\ClipForge`. Use **Open data folder** in the app to open it. When you uninstall, you are asked whether to delete this folder as well.
+- **Saving clips:** the MP4, SRT and zip buttons open a normal Save dialog.
+- **GPU pack (optional):** the CUDA libraries are left out to keep the app small. If an NVIDIA GPU is found, the app offers a one-click **GPU pack** download (about 550 MB download, 740 MB on disk) that makes transcription faster. You can remove it again in the same place. Rendering uses NVENC without it.
+- The app uses the Microsoft Edge WebView2 runtime, which is built into Windows 11 and most Windows 10 PCs.
+
+**Building the installer yourself** (after `setup.bat`):
+
+```bat
+build.bat
+```
+
+This builds `dist\ClipForge\ClipForge.exe` with PyInstaller. If [Inno Setup 6](https://jrsoftware.org/isinfo.php) is installed, it also creates `dist\ClipForge-Setup-1.0.0.exe`.
+
+## Requirements (running from source)
 
 - Windows 10 or 11
 - Python 3.10 or newer ([python.org](https://www.python.org/downloads/); tick **Add python.exe to PATH**)
@@ -114,7 +132,10 @@ ClipForge loads these DLLs on start-up, and the top bar then shows "Whisper: NVI
 
 ```
 app.py              FastAPI server: UI, jobs API, uploads, downloads, zip, settings
+desktop.py          Desktop app: runs the server in-process and shows it in a native window
+clipforge.spec      PyInstaller recipe; build.bat + installer.iss build the installer
 pipeline/           Processing pipeline (no web dependencies, can run on another server)
+  gpu_pack.py       Optional in-app download of the CUDA cuBLAS DLLs (desktop app)
   runner.py         Orchestrates one job end to end (run_job)
   ingest.py         Filename sanitising, yt-dlp downloads with friendly errors
   audio.py          16 kHz mono WAV extraction and loudness analysis

@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>ClipForge</title>
-  <link rel="stylesheet" href="/static/style.css?v=2">
+  <link rel="stylesheet" href="/static/style.css?v=3">
 </head>
 <body>
 <header class="topbar">
@@ -142,9 +142,23 @@
   <section class="card muted-card">
     <div class="row space">
       <div><strong>Previous jobs</strong> <span class="muted small" id="jobCount"></span></div>
-      <button class="btn ghost" id="clearBtn">Clear old jobs</button>
+      <div class="row">
+        <button class="btn ghost" id="dataFolderBtn" hidden>Open data folder</button>
+        <button class="btn ghost" id="clearBtn">Clear old jobs</button>
+      </div>
     </div>
     <div id="jobList" class="joblist"></div>
+  </section>
+
+  <section class="card muted-card" id="gpuCard" hidden>
+    <div class="row space">
+      <div><strong>GPU acceleration</strong><div class="muted small" id="gpuText"></div></div>
+      <div class="row">
+        <button class="btn primary" id="gpuInstall" hidden>Enable GPU</button>
+        <button class="btn danger" id="gpuCancel" hidden>Cancel download</button>
+        <button class="btn ghost" id="gpuRemove" hidden>Remove GPU pack</button>
+      </div>
+    </div>
   </section>
 
   <p class="footnote">Runs 100% locally. Only clip videos you own or have the rights to use.</p>
@@ -166,6 +180,6 @@
   </article>
 </template>
 
-<script src="/static/app.js?v=2"></script>
+<script src="/static/app.js?v=3"></script>
 </body>
 </html>

@@ -1,8 +1,12 @@
 """Speech-to-text with faster-whisper (word timestamps, VAD filter).
 
-Uses an NVIDIA GPU automatically when CUDA works, otherwise CPU with int8.
-If the GPU path fails (for example missing cuBLAS/cuDNN DLLs) it silently
-retries on CPU.
+Uses an NVIDIA GPU automatically when the CUDA 12 cuBLAS DLLs can be loaded,
+otherwise CPU with int8. If the GPU path fails it silently retries on CPU.
+
+CTranslate2 (4.5+) only needs cuBLAS (cublas64_12.dll + cublasLt64_12.dll) to
+run Whisper on the GPU; cuDNN is not required. The DLLs can come from the
+``nvidia-cublas-cu12`` pip wheel or from a folder registered with
+``register_dll_dir`` (the desktop app's downloadable GPU pack).
 """
 
 from __future__ import annotations
@@ -28,29 +32,62 @@ _model_lock = threading.Lock()
 
 
 _gpu_broken = False  # set after a GPU failure so later jobs go straight to CPU
+_extra_dll_dirs: list[Path] = []
+
+CUBLAS_DLLS = ("cublas64_12.dll", "cublasLt64_12.dll")
+
+
+def _add_dll_dir(bin_dir: Path) -> None:
+    import os
+
+    if bin_dir.is_dir() and str(bin_dir) not in os.environ.get("PATH", ""):
+        os.environ["PATH"] = str(bin_dir) + os.pathsep + os.environ.get("PATH", "")
+        if hasattr(os, "add_dll_directory"):
+            try:
+                os.add_dll_directory(str(bin_dir))
+            except OSError:
+                pass
+
+
+def register_dll_dir(path: Path) -> None:
+    """Add a folder holding CUDA DLLs (e.g. the app's GPU pack) and re-check GPU support."""
+    if path not in _extra_dll_dirs:
+        _extra_dll_dirs.append(path)
+    reset_gpu_state()
+
+
+def reset_gpu_state() -> None:
+    """Forget cached GPU checks (after installing or removing the GPU pack)."""
+    global _gpu_broken
+    _gpu_broken = False
+    _cuda_usable.cache_clear()
 
 
 def _add_nvidia_dll_dirs() -> None:
-    """Make CUDA DLLs from the optional pip wheels (nvidia-cublas-cu12, nvidia-cudnn-cu12) loadable."""
+    """Make CUDA DLLs loadable: registered folders, then the optional nvidia-* pip wheels."""
+    for d in _extra_dll_dirs:
+        _add_dll_dir(d)
     try:
         import nvidia  # namespace package installed by the nvidia-* wheels
     except ImportError:
         return
-    import os
-
     for base in getattr(nvidia, "__path__", []):
         for bin_dir in Path(base).glob("*/bin"):
-            if bin_dir.is_dir() and str(bin_dir) not in os.environ.get("PATH", ""):
-                os.environ["PATH"] = str(bin_dir) + os.pathsep + os.environ.get("PATH", "")
-                if hasattr(os, "add_dll_directory"):
-                    try:
-                        os.add_dll_directory(str(bin_dir))
-                    except OSError:
-                        pass
+            _add_dll_dir(bin_dir)
+
+
+def nvidia_gpu_present() -> bool:
+    """True if CTranslate2 sees an NVIDIA GPU (driver installed), regardless of cuBLAS."""
+    try:
+        import ctranslate2
+
+        return ctranslate2.get_cuda_device_count() > 0
+    except Exception:  # noqa: BLE001
+        return False
 
 
 def _cuda_libs_loadable() -> bool:
-    """True if the CUDA 12 cuBLAS and cuDNN 9 DLLs that CTranslate2 needs can be loaded.
+    """True if the CUDA 12 cuBLAS DLLs that CTranslate2 needs can be loaded.
 
     Checked up front because a failed GPU attempt can leave CTranslate2 in a bad
     state (we observed a hang when retrying after "cublas64_12.dll not found").
@@ -59,8 +96,7 @@ def _cuda_libs_loadable() -> bool:
     import sys
 
     _add_nvidia_dll_dirs()
-    names = (["cublas64_12.dll", "cudnn64_9.dll"] if sys.platform == "win32"
-             else ["libcublas.so.12", "libcudnn.so.9"])
+    names = CUBLAS_DLLS if sys.platform == "win32" else ("libcublas.so.12", "libcublasLt.so.12")
     for name in names:
         try:
             ctypes.CDLL(name)
@@ -72,9 +108,7 @@ def _cuda_libs_loadable() -> bool:
 @lru_cache(maxsize=1)
 def _cuda_usable() -> bool:
     try:
-        import ctranslate2
-
-        return ctranslate2.get_cuda_device_count() > 0 and _cuda_libs_loadable()
+        return nvidia_gpu_present() and _cuda_libs_loadable()
     except Exception:  # noqa: BLE001
         return False
 

@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import logging
 import re
+import shutil
 import threading
 import unicodedata
 from pathlib import Path
@@ -17,6 +19,7 @@ ALLOWED_EXTENSIONS = {
 }
 
 ProgressFn = Callable[[float, str], None]
+log = logging.getLogger(__name__)
 
 
 def sanitize_filename(name: str, default: str = "video") -> str:
@@ -72,6 +75,22 @@ def _friendly_download_error(message: str) -> str:
     return "The download failed. Check the link, or update yt-dlp by running setup.bat again."
 
 
+class _YtdlpLogger:
+    """Send yt-dlp warnings/errors to the app log (they explain most download failures)."""
+
+    def debug(self, msg: str) -> None:
+        pass
+
+    def info(self, msg: str) -> None:
+        pass
+
+    def warning(self, msg: str) -> None:
+        log.warning("yt-dlp: %s", msg)
+
+    def error(self, msg: str) -> None:
+        log.error("yt-dlp: %s", msg)
+
+
 def download_url(
     url: str,
     dest_dir: Path,
@@ -118,6 +137,13 @@ def download_url(
     ffmpeg = find_ffmpeg()
     if ffmpeg:
         opts["ffmpeg_location"] = ffmpeg
+    # YouTube needs a JS runtime to solve its download challenges; without one,
+    # downloads fail with HTTP 403. Point yt-dlp at deno explicitly (the desktop
+    # app bundles deno.exe and puts it on PATH).
+    deno = shutil.which("deno")
+    if deno:
+        opts["js_runtimes"] = {"deno": {"path": deno}}
+    opts["logger"] = _YtdlpLogger()
 
     try:
         with yt_dlp.YoutubeDL(opts) as ydl:

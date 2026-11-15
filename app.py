@@ -1,13 +1,23 @@
 """ClipForge web server (FastAPI) - serves the UI and runs pipeline jobs in the background.
 
 Run:  .venv\\Scripts\\python app.py   (or run.bat)  ->  http://localhost:7860
+The desktop app (desktop.py) imports this module and shows it in its own window.
+
+Paths:
+* RESOURCE_DIR - read-only files shipped with the app (static UI). Inside a
+  PyInstaller build this is the bundle folder.
+* DATA_DIR - writable user data (jobs, Whisper models, config.json, GPU pack).
+  Set by the CLIPFORGE_HOME environment variable (the desktop app uses
+  %LOCALAPPDATA%\\ClipForge); defaults to the project folder.
 """
 
 from __future__ import annotations
 
 import json
 import logging
+import os
 import shutil
+import sys
 import threading
 import time
 import uuid
@@ -25,19 +35,23 @@ from fastapi.staticfiles import StaticFiles
 from pipeline import JobCancelled, JobOptions, PipelineError, Source, run_job
 from pipeline.ai_picker import DEFAULT_CLOUD_URL, DEFAULT_LOCAL_URL, OllamaSettings, test_connection
 from pipeline.ffmpeg_utils import get_capabilities
+from pipeline.gpu_pack import GpuPack
 from pipeline.ingest import check_upload_extension, is_probably_url, sanitize_filename
 from pipeline.transcribe import WHISPER_MODELS, _cuda_available
 
-ROOT = Path(__file__).resolve().parent
-JOBS_DIR = ROOT / "jobs"
-MODELS_DIR = ROOT / "models"
-STATIC_DIR = ROOT / "static"
-CONFIG_PATH = ROOT / "config.json"
+RESOURCE_DIR = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parent))
+DATA_DIR = Path(os.environ.get("CLIPFORGE_HOME") or Path(__file__).resolve().parent)
+JOBS_DIR = DATA_DIR / "jobs"
+MODELS_DIR = DATA_DIR / "models"
+STATIC_DIR = RESOURCE_DIR / "static"
+CONFIG_PATH = DATA_DIR / "config.json"
 HOST, PORT = "127.0.0.1", 7860
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 log = logging.getLogger("clipforge")
-JOBS_DIR.mkdir(exist_ok=True)
+JOBS_DIR.mkdir(parents=True, exist_ok=True)
+gpu_pack = GpuPack(DATA_DIR / "gpu")
+IS_DESKTOP = bool(os.environ.get("CLIPFORGE_DESKTOP"))
 
 app = FastAPI(title="ClipForge")
 executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="job")  # one heavy job at a time
@@ -162,8 +176,38 @@ def system_info() -> dict:
     return {
         "ffmpeg": caps.path, "ffmpeg_version": caps.version, "has_ass": caps.has_ass,
         "has_nvenc": caps.has_nvenc, "cuda": _cuda_available(), "warnings": caps.warnings,
-        "whisper_models": list(WHISPER_MODELS),
+        "whisper_models": list(WHISPER_MODELS), "desktop": IS_DESKTOP,
     }
+
+
+@app.get("/api/gpu")
+def gpu_status() -> dict:
+    """GPU pack status: is there an NVIDIA GPU, is the pack installed/active, download progress."""
+    return gpu_pack.status()
+
+
+@app.post("/api/gpu/install")
+def gpu_install() -> dict:
+    if not gpu_pack.status()["nvidia_gpu"]:
+        raise HTTPException(400, "No NVIDIA GPU was found, so the GPU pack would not help.")
+    gpu_pack.start_install()
+    return gpu_pack.status()
+
+
+@app.post("/api/gpu/cancel")
+def gpu_cancel() -> dict:
+    gpu_pack.cancel_install()
+    return gpu_pack.status()
+
+
+@app.delete("/api/gpu")
+def gpu_remove() -> dict:
+    with jobs_lock:
+        busy = any(j.state in ("queued", "running") for j in jobs.values())
+    if busy:
+        raise HTTPException(409, "Wait for the current job to finish before removing the GPU pack.")
+    gpu_pack.remove()
+    return gpu_pack.status()
 
 
 @app.post("/api/jobs")
@@ -288,9 +332,8 @@ def get_file(job_id: str, name: str, download: int = 0):
     return FileResponse(path, media_type=media)
 
 
-@app.get("/api/jobs/{job_id}/zip")
-def get_zip(job_id: str):
-    job = get_job(job_id)
+def build_zip(job: Job) -> tuple[Path, str]:
+    """Create (or reuse) clips.zip for a finished job. Returns (path, suggested download name)."""
     if job.state != "done" or not job.result:
         raise HTTPException(409, "The clips are not ready yet.")
     zip_path = job.dir / "clips.zip"
@@ -307,7 +350,25 @@ def get_zip(job_id: str):
                 zf.write(f, arcname=f.name)
         tmp.replace(zip_path)
     stem = sanitize_filename(job.result.get("title") or "clips", default="clips").rsplit(".", 1)[0]
-    return FileResponse(zip_path, media_type="application/zip", filename=f"{stem}_clips.zip")
+    return zip_path, f"{stem}_clips.zip"
+
+
+def resolve_download(job_id: str, name: str) -> tuple[Path, str]:
+    """Path and suggested file name for a download; ``name`` is a clip file or "zip".
+
+    Used by the desktop app's native "Save as" dialog. Raises HTTPException on bad input.
+    """
+    job = get_job(job_id)
+    if name == "zip":
+        return build_zip(job)
+    path = _safe_file(job, name)
+    return path, path.name
+
+
+@app.get("/api/jobs/{job_id}/zip")
+def get_zip(job_id: str):
+    zip_path, filename = build_zip(get_job(job_id))
+    return FileResponse(zip_path, media_type="application/zip", filename=filename)
 
 
 @app.get("/api/config")

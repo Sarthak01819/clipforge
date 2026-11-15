@@ -15,3 +15,6 @@ config.tmp
 Thumbs.db
 .vscode/
 .idea/
+build/
+dist/
+build_log.txt
