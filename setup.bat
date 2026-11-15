@@ -41,6 +41,15 @@ if errorlevel 1 (
   exit /b 1
 )
 
+where nvidia-smi >nul 2>nul
+if errorlevel 1 (
+  echo No NVIDIA GPU detected - Whisper will run on the CPU.
+) else (
+  echo NVIDIA GPU detected - installing CUDA libraries for GPU transcription ^(about 1 GB^) ...
+  ".venv\Scripts\python.exe" -m pip install --upgrade -r requirements-gpu.txt
+  if errorlevel 1 echo [WARNING] GPU libraries failed to install - Whisper will use the CPU.
+)
+
 where ffmpeg >nul 2>nul
 if errorlevel 1 (
   echo FFmpeg not on PATH - ClipForge will use the copy bundled with imageio-ffmpeg.

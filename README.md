@@ -23,7 +23,7 @@ Everything runs on your own computer. No paid services, no account and no API ke
 
 A GPU is not required. If you have an NVIDIA GPU:
 - **Rendering** uses the NVENC hardware encoder automatically when it is available.
-- **Transcription** uses the GPU only if the CUDA 12 libraries are installed (see [GPU transcription](#gpu-transcription-optional)). Otherwise it runs on the CPU with int8 quantisation.
+- **Transcription** uses the GPU when the CUDA 12 libraries are installed, which `setup.bat` does for you (see [GPU transcription](#gpu-transcription)). Otherwise it runs on the CPU with int8 quantisation.
 
 ## Setup (CMD)
 
@@ -32,7 +32,7 @@ cd path\to\video-clipper
 setup.bat
 ```
 
-`setup.bat` creates a virtual environment in `.venv` and installs everything from `requirements.txt` into it. Run it again at any time to update packages, including yt-dlp. Sites change often, so updating yt-dlp fixes most download errors.
+`setup.bat` creates a virtual environment in `.venv` and installs everything from `requirements.txt` into it, plus the GPU libraries from `requirements-gpu.txt` if an NVIDIA GPU is found. Run it again at any time to update packages, including yt-dlp. Sites change often, so updating yt-dlp fixes most download errors.
 
 ## Run
 
@@ -99,16 +99,16 @@ If Ollama is unreachable, times out or returns bad JSON, ClipForge falls back to
 
 Settings, including the key, are stored in `config.json` next to `app.py`. This file is in `.gitignore`, so it is never committed, and the key is never sent back to the browser.
 
-## GPU transcription (optional)
+## GPU transcription
 
-faster-whisper (CTranslate2) needs the CUDA 12 cuBLAS and cuDNN 9 libraries to use an NVIDIA GPU. The easiest way to get them is to install the pip wheels into the venv (about 1 GB):
+faster-whisper (CTranslate2) needs the CUDA 12 cuBLAS and cuDNN 9 libraries to use an NVIDIA GPU. `setup.bat` installs them automatically from `requirements-gpu.txt` (about 1 GB) when `nvidia-smi` finds a GPU. To install them by hand:
 
 ```bat
 .venv\Scripts\activate
-pip install nvidia-cublas-cu12 "nvidia-cudnn-cu12==9.*"
+pip install -r requirements-gpu.txt
 ```
 
-ClipForge finds these DLLs automatically on the next start. The top bar then shows "Whisper: NVIDIA GPU". If the libraries can't be loaded, it uses the CPU.
+ClipForge loads these DLLs on start-up, and the top bar then shows "Whisper: NVIDIA GPU". Tested on a GTX 1650 (4 GB). If the libraries can't be loaded, it uses the CPU. Rendering uses NVENC on its own, with no extra libraries.
 
 ## Project layout
 

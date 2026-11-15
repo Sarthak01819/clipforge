@@ -1,0 +1,4 @@
+# Optional: CUDA 12 libraries so faster-whisper can transcribe on an NVIDIA GPU (~1 GB).
+# setup.bat installs these automatically when nvidia-smi finds a GPU.
+nvidia-cublas-cu12
+nvidia-cudnn-cu12==9.*
