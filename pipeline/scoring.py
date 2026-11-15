@@ -68,6 +68,9 @@ class Unit:
     end: float
     text: str
     words: list[dict] = field(default_factory=list)
+    # True when the unit ends a sentence (terminal punctuation, or a clear pause
+    # after it). Clips may only start after, and end on, such units.
+    ends_sentence: bool = True
 
 
 @dataclass
@@ -91,36 +94,50 @@ class Clip:
 
 # --------------------------------------------------------------------------- units
 
-def build_units(segments: list[dict]) -> list[Unit]:
-    """Split Whisper segments into sentence units using word timestamps.
+PAUSE_BREAK = 1.0  # a silence this long (s) counts as a sentence boundary
 
-    Very long sentences are cut further at word boundaries (prefer commas) so a
-    clip can always fit inside the max length.
+
+def build_units(segments: list[dict]) -> list[Unit]:
+    """Split the transcript into sentence units using word timestamps.
+
+    Words from all Whisper segments are treated as one continuous stream,
+    because Whisper's segment edges often fall mid-sentence. A unit ends at
+    terminal punctuation or a clear pause. Very long sentences are cut further
+    at word boundaries (prefer commas) so a clip can always fit inside the max
+    length; those cut points are marked ``ends_sentence=False``.
     """
+    stream: list[dict] = []
     units: list[Unit] = []
     for seg in segments:
         words = [w for w in seg.get("words") or [] if w.get("word", "").strip()]
-        if not words:
-            if seg.get("text", "").strip():
-                units.append(Unit(seg["start"], seg["end"], seg["text"].strip(), []))
-            continue
-        current: list[dict] = []
-        for w in words:
-            current.append(w)
-            token = w["word"].strip()
-            dur = current[-1]["end"] - current[0]["start"]
-            if _SENTENCE_END.search(token) or (dur >= 8 and token.endswith((",", ";", ":"))) or dur >= 15:
-                units.append(_unit_from_words(current))
-                current = []
-        if current:
-            units.append(_unit_from_words(current))
+        if words:
+            stream.extend(words)
+        elif seg.get("text", "").strip():  # no word timings: keep the segment as one unit
+            units.append(Unit(seg["start"], seg["end"], seg["text"].strip(), []))
+    stream.sort(key=lambda w: w["start"])
+
+    current: list[dict] = []
+    for k, w in enumerate(stream):
+        current.append(w)
+        token = w["word"].strip()
+        nxt = stream[k + 1] if k + 1 < len(stream) else None
+        pause = (nxt["start"] - w["end"]) if nxt else PAUSE_BREAK
+        dur = w["end"] - current[0]["start"]
+        if _SENTENCE_END.search(token) or pause >= PAUSE_BREAK:
+            units.append(_unit_from_words(current, ends_sentence=True))
+            current = []
+        elif (dur >= 8 and token.endswith((",", ";", ":"))) or dur >= 15:
+            units.append(_unit_from_words(current, ends_sentence=False))
+            current = []
+    if current:
+        units.append(_unit_from_words(current, ends_sentence=True))
     units.sort(key=lambda u: u.start)
     return units
 
 
-def _unit_from_words(words: list[dict]) -> Unit:
+def _unit_from_words(words: list[dict], ends_sentence: bool = True) -> Unit:
     text = "".join(w["word"] for w in words).strip()
-    return Unit(words[0]["start"], words[-1]["end"], text, list(words))
+    return Unit(words[0]["start"], words[-1]["end"], text, list(words), ends_sentence)
 
 
 def padded_bounds(units: list[Unit], i: int, j: int, duration: float, pad: float = PAD) -> tuple[float, float]:
@@ -274,18 +291,27 @@ def score_span(units: list[Unit], i: int, j: int, scorer: Scorer, duration: floa
 
 
 def build_candidates(units: list[Unit], min_len: float, max_len: float, duration: float) -> list[tuple[int, int]]:
-    """All unit spans (i, j) whose padded length lies within [min_len, max_len]."""
-    spans: list[tuple[int, int]] = []
-    n = len(units)
-    for i in range(n):
-        for j in range(i, n):
-            s, e = padded_bounds(units, i, j, duration)
-            length = e - s
-            if length > max_len:
-                break
-            if length >= min_len:
-                spans.append((i, j))
-    return spans
+    """Unit spans (i, j) whose padded length lies within [min_len, max_len].
+
+    Spans must start at the beginning of a sentence and end at the end of one.
+    If that leaves nothing (e.g. one endless run-on sentence), any span is allowed.
+    """
+    def collect(whole_sentences: bool) -> list[tuple[int, int]]:
+        spans: list[tuple[int, int]] = []
+        n = len(units)
+        for i in range(n):
+            if whole_sentences and i > 0 and not units[i - 1].ends_sentence:
+                continue
+            for j in range(i, n):
+                s, e = padded_bounds(units, i, j, duration)
+                length = e - s
+                if length > max_len:
+                    break
+                if length >= min_len and (not whole_sentences or units[j].ends_sentence):
+                    spans.append((i, j))
+        return spans
+
+    return collect(True) or collect(False)
 
 
 def select_top(clips: list[Clip], n: int) -> list[Clip]:

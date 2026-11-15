@@ -183,19 +183,30 @@ def _snap(units: list[Unit], start: float, end: float, min_len: float, max_len: 
     """Snap AI times to unit boundaries and clamp to the allowed length."""
     if not units:
         return None
-    i = min(range(len(units)), key=lambda k: abs(units[k].start - start))
-    j = min(range(i, len(units)), key=lambda k: abs(units[k].end - end))
+    # Valid boundaries: clips start right after a sentence end and end on one.
+    starts = [k for k in range(len(units)) if k == 0 or units[k - 1].ends_sentence] or list(range(len(units)))
+    ends = [k for k in range(len(units)) if units[k].ends_sentence] or list(range(len(units)))
 
     def length(a: int, b: int) -> float:
         s, e = padded_bounds(units, a, b, duration)
         return e - s
 
-    while j > i and length(i, j) > max_len:
-        j -= 1
-    while length(i, j) < min_len and j + 1 < len(units) and length(i, j + 1) <= max_len:
-        j += 1
-    while length(i, j) < min_len and i > 0 and length(i - 1, j) <= max_len:
-        i -= 1
+    i = min(starts, key=lambda k: abs(units[k].start - start))
+    valid_ends = [k for k in ends if k >= i]
+    if not valid_ends:
+        return None
+    j = min(valid_ends, key=lambda k: abs(units[k].end - end))
+    pos = valid_ends.index(j)
+    while pos > 0 and length(i, valid_ends[pos]) > max_len:  # too long: end earlier
+        pos -= 1
+    while length(i, valid_ends[pos]) < min_len and pos + 1 < len(valid_ends) \
+            and length(i, valid_ends[pos + 1]) <= max_len:  # too short: end later
+        pos += 1
+    j = valid_ends[pos]
+    s_pos = starts.index(i)
+    while length(i, j) < min_len and s_pos > 0 and length(starts[s_pos - 1], j) <= max_len:  # start earlier
+        s_pos -= 1
+        i = starts[s_pos]
     if length(i, j) > max_len + 0.01:
         return None
     return i, j
